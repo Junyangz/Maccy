@@ -1,4 +1,5 @@
 import AppKit.NSRunningApplication
+import AppKit.NSWorkspace
 import Defaults
 import Foundation
 import Logging
@@ -11,6 +12,76 @@ import SwiftData
 class History { // swiftlint:disable:this type_body_length
   static let shared = History()
   let logger = Logger(label: "org.p0deje.Maccy")
+
+  enum ContentFilter: CaseIterable, Identifiable {
+    case all
+    case text
+    case links
+    case images
+    case files
+
+    var id: Self { self }
+
+    var iconName: String {
+      switch self {
+      case .all:
+        return "square.grid.2x2"
+      case .text:
+        return "text.alignleft"
+      case .links:
+        return "link"
+      case .images:
+        return "photo"
+      case .files:
+        return "doc"
+      }
+    }
+
+    var localizationKey: String {
+      switch self {
+      case .all:
+        return "filter_all"
+      case .text:
+        return "filter_text"
+      case .links:
+        return "filter_links"
+      case .images:
+        return "filter_images"
+      case .files:
+        return "filter_files"
+      }
+    }
+
+    var defaultTitle: String {
+      switch self {
+      case .all:
+        return "All"
+      case .text:
+        return "Text"
+      case .links:
+        return "Links"
+      case .images:
+        return "Images"
+      case .files:
+        return "Files"
+      }
+    }
+
+    func matches(_ item: HistoryItemDecorator) -> Bool {
+      switch self {
+      case .all:
+        return true
+      case .text:
+        return item.matchesTextFilter
+      case .links:
+        return item.matchesLinksFilter
+      case .images:
+        return item.matchesImagesFilter
+      case .files:
+        return item.matchesFilesFilter
+      }
+    }
+  }
 
   var items: [HistoryItemDecorator] = []
   var selectedItem: HistoryItemDecorator? {
@@ -26,15 +97,17 @@ class History { // swiftlint:disable:this type_body_length
   var searchQuery: String = "" {
     didSet {
       throttler.throttle { [self] in
-        updateItems(search.search(string: searchQuery, within: all))
-
-        if searchQuery.isEmpty {
-          AppState.shared.selection = unpinnedItems.first?.id
-        } else {
-          AppState.shared.highlightFirst()
+        Task { @MainActor [self] in
+          self.applyFilterAndSearch()
         }
+      }
+    }
+  }
 
-        AppState.shared.popup.needsResize = true
+  var contentFilter: ContentFilter = .all {
+    didSet {
+      Task { @MainActor [self] in
+        self.applyFilterAndSearch()
       }
     }
   }
@@ -112,13 +185,7 @@ class History { // swiftlint:disable:this type_body_length
     let descriptor = FetchDescriptor<HistoryItem>()
     let results = try Storage.shared.context.fetch(descriptor)
     all = sorter.sort(results).map { HistoryItemDecorator($0) }
-    items = all
-
-    updateShortcuts()
-    // Ensure that panel size is proper *after* loading all items.
-    Task {
-      AppState.shared.popup.needsResize = true
-    }
+    applyFilterAndSearch()
   }
 
   @discardableResult
@@ -167,11 +234,9 @@ class History { // swiftlint:disable:this type_body_length
       if let index = sortedItems.firstIndex(of: item) {
         all.insert(itemDecorator, at: index)
       }
-
-      items = all
-      updateUnpinnedShortcuts()
-      AppState.shared.popup.needsResize = true
     }
+
+    applyFilterAndSearch(shouldUpdateSelection: searchQuery.isEmpty && contentFilter.matches(itemDecorator))
 
     return itemDecorator
   }
@@ -191,27 +256,24 @@ class History { // swiftlint:disable:this type_body_length
 
   @MainActor
   func clear() {
-    withLogging("Clearing history") {
-      all.forEach { item in
-        if item.isUnpinned {
-          cleanup(item)
-        }
-      }
-      all.removeAll(where: \.isUnpinned)
-      sessionLog.removeValues { $0.pin == nil }
-      items = all
+    let visibleUnpinned = items.filter(\.isUnpinned)
+    let removableIdentifiers = Set(visibleUnpinned.map { $0.id })
+    let removableItems = Set(visibleUnpinned.map { $0.item })
 
-      try? Storage.shared.context.delete(
-        model: HistoryItem.self,
-        where: #Predicate { $0.pin == nil }
-      )
-      try? Storage.shared.context.delete(
-        model: HistoryItemContent.self,
-        where: #Predicate { $0.item?.pin == nil }
-      )
+    withLogging("Clearing history") {
+      visibleUnpinned.forEach { cleanup($0) }
+      all.removeAll { removableIdentifiers.contains($0.id) }
+      items.removeAll { removableIdentifiers.contains($0.id) }
+      sessionLog.removeValues { removableItems.contains($0) }
+
+      visibleUnpinned.forEach { item in
+        Storage.shared.context.delete(item.item)
+      }
       Storage.shared.context.processPendingChanges()
       try? Storage.shared.context.save()
     }
+
+    applyFilterAndSearch()
 
     Clipboard.shared.clear()
     AppState.shared.popup.close()
@@ -228,12 +290,14 @@ class History { // swiftlint:disable:this type_body_length
       }
       all.removeAll()
       sessionLog.removeAll()
-      items = all
+      items.removeAll()
 
       try? Storage.shared.context.delete(model: HistoryItem.self)
       Storage.shared.context.processPendingChanges()
       try? Storage.shared.context.save()
     }
+
+    applyFilterAndSearch()
 
     Clipboard.shared.clear()
     AppState.shared.popup.close()
@@ -256,10 +320,7 @@ class History { // swiftlint:disable:this type_body_length
     items.removeAll { $0 == item }
     sessionLog.removeValues { $0 == item.item }
 
-    updateUnpinnedShortcuts()
-    Task {
-      AppState.shared.popup.needsResize = true
-    }
+    applyFilterAndSearch()
   }
 
   private func cleanup(_ item: HistoryItemDecorator) {
@@ -322,13 +383,30 @@ class History { // swiftlint:disable:this type_body_length
       all.insert(item, at: newIndex)
     }
 
-    items = all
-
+    let shouldRefreshImmediately = searchQuery.isEmpty
     searchQuery = ""
-    updateUnpinnedShortcuts()
+    if shouldRefreshImmediately {
+      applyFilterAndSearch()
+    }
     if item.isUnpinned {
       AppState.shared.scrollTarget = item.id
     }
+  }
+
+  @MainActor
+  func cycleFilter() {
+    guard let currentIndex = ContentFilter.allCases.firstIndex(of: contentFilter) else { return }
+    let nextIndex = ContentFilter.allCases.index(after: currentIndex)
+    let wrappedIndex = nextIndex == ContentFilter.allCases.endIndex ? ContentFilter.allCases.startIndex : nextIndex
+    contentFilter = ContentFilter.allCases[wrappedIndex]
+  }
+
+  @MainActor
+  func openLink(for item: HistoryItemDecorator? = nil, url: URL? = nil) {
+    let targetItem = item ?? selectedItem ?? items.first
+    guard let resolvedURL = url ?? targetItem?.primaryURL else { return }
+
+    NSWorkspace.shared.open(resolvedURL)
   }
 
   @MainActor
@@ -354,6 +432,34 @@ class History { // swiftlint:disable:this type_body_length
     return nil
   }
 
+  @MainActor
+  private func applyFilterAndSearch(shouldUpdateSelection: Bool = true) {
+    let filteredItems = all.filter { contentFilter.matches($0) }
+    let results = search.search(string: searchQuery, within: filteredItems)
+    let visibleIdentifiers = Set(results.map { $0.object.id })
+
+    for item in all {
+      item.isVisible = visibleIdentifiers.contains(item.id)
+    }
+
+    updateItems(results)
+    updateShortcuts()
+
+    if shouldUpdateSelection {
+      if searchQuery.isEmpty {
+        if let first = unpinnedItems.first?.id ?? pinnedItems.first?.id {
+          AppState.shared.selection = first
+        } else {
+          AppState.shared.selection = nil
+        }
+      } else {
+        AppState.shared.highlightFirst()
+      }
+    }
+
+    AppState.shared.popup.needsResize = true
+  }
+
   private func updateItems(_ newItems: [Search.SearchResult]) {
     items = newItems.map { result in
       let item = result.object
@@ -361,8 +467,6 @@ class History { // swiftlint:disable:this type_body_length
 
       return item
     }
-
-    updateUnpinnedShortcuts()
   }
 
   private func updateShortcuts() {

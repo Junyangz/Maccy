@@ -96,6 +96,12 @@ struct KeyHandlingView<Content: View>: View {
         case .openPreferences:
           appState.openPreferences()
           return .handled
+        case .cycleFilter:
+          appState.history.cycleFilter()
+          return .handled
+        case .openPrimaryLink:
+          appState.history.openLink()
+          return .handled
         case .pinOrUnpin:
           appState.history.togglePin(appState.history.selectedItem)
           return .handled

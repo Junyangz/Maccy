@@ -4,3 +4,12 @@
 "NumberOfCopies" = "Number of copies:";
 "PinKey" = "Press {pinKey} to (un)pin.";
 "DeleteKey" = "Press {deleteKey} to delete.";
+"PreviewDetails" = "Details";
+"PreviewFiles" = "Files";
+"PreviewLinks" = "Links";
+"PreviewOpen" = "Open";
+"PreviewOpenShortcutHelp" = "Press ⌘O to open the first detected link or file.";
+"PreviewPlaceholder" = "Select an item to see its details.";
+"PreviewShortcuts" = "Shortcuts";
+"PreviewTitle" = "Preview";
+"PreviewUnavailable" = "No preview available.";

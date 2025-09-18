@@ -28,3 +28,8 @@
 "system_settings_pane" = "Privacy & Security settings";
 "system_preferences_name" = "System Preferences";
 "system_preferences_pane" = "Security & Privacy preferences";
+"filter_all" = "All";
+"filter_text" = "Text";
+"filter_links" = "Links";
+"filter_images" = "Images";
+"filter_files" = "Files";

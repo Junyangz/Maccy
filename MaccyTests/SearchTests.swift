@@ -233,6 +233,31 @@ class SearchTests: XCTestCase {
     XCTAssertEqual(search("m"), [])
   }
 
+  @MainActor
+  func testMixedSearchRanksExactAndTokenMatchesFirst() {
+    Defaults[.searchMode] = Search.Mode.mixed
+    items = [
+      HistoryItemDecorator(historyItemWithTitle("Foo Bar")),
+      HistoryItemDecorator(historyItemWithTitle("Example foo bar text")),
+      HistoryItemDecorator(historyItemWithTitle("Bar foo")),
+      HistoryItemDecorator(historyItemWithTitle("Completely different"))
+    ]
+
+    let results = search("foo bar")
+
+    XCTAssertEqual(results.count, 3)
+    XCTAssertEqual(results.map(\.object), [items[0], items[1], items[2]])
+    XCTAssertEqual(results[0].ranges, [range(from: 0, to: 6, in: items[0])])
+    XCTAssertEqual(results[1].ranges, [range(from: 8, to: 14, in: items[1])])
+    XCTAssertEqual(
+      results[2].ranges,
+      [
+        range(from: 0, to: 2, in: items[2]),
+        range(from: 4, to: 6, in: items[2])
+      ]
+    )
+  }
+
   private func search(_ string: String) -> [Search.SearchResult] {
     return Search().search(string: string, within: items)
   }
