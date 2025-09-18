@@ -1,5 +1,6 @@
-import XCTest
+import AppKit.NSImage
 import Defaults
+import XCTest
 @testable import Maccy
 
 @MainActor
@@ -19,6 +20,7 @@ class HistoryTests: XCTestCase {
     super.tearDown()
     Defaults[.size] = savedSize
     Defaults[.sortBy] = savedSortBy
+    history.contentFilter = .all
   }
 
   func testDefaultIsEmpty() {
@@ -185,6 +187,29 @@ class HistoryTests: XCTestCase {
     XCTAssertEqual(history.items, [])
   }
 
+  func testContentFiltersAffectVisibleItems() {
+    let textItem = history.add(historyItem("Plain text"))
+    let linkItem = history.add(historyItem("https://maccy.app"))
+    let imageItem = history.add(historyImageItem())
+    let fileURL = URL(fileURLWithPath: "/tmp/maccy-test-\(UUID().uuidString).txt")
+    let fileItem = history.add(historyFileItem(fileURL))
+
+    applyFilter(.links)
+    XCTAssertEqual(Set(history.items), Set([linkItem]))
+
+    applyFilter(.images)
+    XCTAssertEqual(Set(history.items), Set([imageItem]))
+
+    applyFilter(.files)
+    XCTAssertEqual(Set(history.items), Set([fileItem]))
+
+    applyFilter(.text)
+    XCTAssertEqual(Set(history.items), Set([textItem, linkItem]))
+
+    applyFilter(.all)
+    XCTAssertEqual(Set(history.items), Set([textItem, linkItem, imageItem, fileItem]))
+  }
+
   func testMaxSize() {
     var items: [HistoryItemDecorator] = []
     for index in 0...10 {
@@ -247,5 +272,49 @@ class HistoryTests: XCTestCase {
     item.title = item.generateTitle()
 
     return item
+  }
+
+  private func historyImageItem() -> HistoryItem {
+    let image = NSImage(named: NSImage.Name("NSBluetoothTemplate"))!
+    let contents = [
+      HistoryItemContent(
+        type: NSPasteboard.PasteboardType.tiff.rawValue,
+        value: image.tiffRepresentation
+      )
+    ]
+    let item = HistoryItem()
+    Storage.shared.context.insert(item)
+    item.contents = contents
+    item.title = item.generateTitle()
+
+    return item
+  }
+
+  private func historyFileItem(_ url: URL) -> HistoryItem {
+    let contents = [
+      HistoryItemContent(
+        type: NSPasteboard.PasteboardType.fileURL.rawValue,
+        value: url.dataRepresentation
+      ),
+      HistoryItemContent(
+        type: NSPasteboard.PasteboardType.string.rawValue,
+        value: url.lastPathComponent.data(using: .utf8)
+      )
+    ]
+    let item = HistoryItem()
+    Storage.shared.context.insert(item)
+    item.contents = contents
+    item.title = item.generateTitle()
+
+    return item
+  }
+
+  private func applyFilter(_ filter: History.ContentFilter) {
+    history.contentFilter = filter
+    waitForHistoryUpdate()
+  }
+
+  private func waitForHistoryUpdate() {
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
   }
 }

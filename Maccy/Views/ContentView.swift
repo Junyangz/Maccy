@@ -19,10 +19,18 @@ struct ContentView: View {
             searchQuery: $appState.history.searchQuery
           )
 
-          HistoryListView(
-            searchQuery: $appState.history.searchQuery,
-            searchFocused: $searchFocused
-          )
+          HStack(spacing: 0) {
+            HistoryListView(
+              searchQuery: $appState.history.searchQuery,
+              searchFocused: $searchFocused
+            )
+            .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            PreviewItemView(item: appState.history.selectedItem)
+              .frame(width: 320, maxHeight: .infinity)
+          }
 
           FooterView(footer: appState.footer)
         }

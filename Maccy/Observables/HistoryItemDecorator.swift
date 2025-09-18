@@ -10,7 +10,6 @@ class HistoryItemDecorator: Identifiable, Hashable {
     return lhs.id == rhs.id
   }
 
-  static var previewThrottler = Throttler(minimumDelay: Double(Defaults[.previewDelay]) / 1000)
   static var previewImageSize: NSSize { NSScreen.forPopup?.visibleFrame.size ?? NSSize(width: 2048, height: 1536) }
   static var thumbnailImageSize: NSSize { NSSize(width: 340, height: Defaults[.imageMaxHeight]) }
 
@@ -20,21 +19,8 @@ class HistoryItemDecorator: Identifiable, Hashable {
   var attributedTitle: AttributedString?
 
   var isVisible: Bool = true
-  var isSelected: Bool = false {
-    didSet {
-      if isSelected {
-        Self.previewThrottler.throttle {
-          Self.previewThrottler.minimumDelay = 0.2
-          self.showPreview = true
-        }
-      } else {
-        Self.previewThrottler.cancel()
-        self.showPreview = false
-      }
-    }
-  }
+  var isSelected: Bool = false
   var shortcuts: [KeyShortcut] = []
-  var showPreview: Bool = false
 
   var application: String? {
     if item.universalClipboard {
@@ -58,6 +44,55 @@ class HistoryItemDecorator: Identifiable, Hashable {
   // 10k characters seems to be more than enough on large displays
   var text: String { item.previewableText.shortened(to: 10_000) }
 
+  var primaryURL: URL? {
+    if let link = linkURLs.first(where: { !$0.isFileURL }) {
+      return link
+    }
+
+    if let fileURL = fileURLs.first {
+      return fileURL
+    }
+
+    return linkURLs.first
+  }
+
+  var fileURLs: [URL] { item.fileURLs }
+
+  var linkURLs: [URL] {
+    if let cachedLinkURLs {
+      return cachedLinkURLs
+    }
+
+    guard let detector = Self.linkDetector else {
+      cachedLinkURLs = []
+      return []
+    }
+
+    let matches = detector.matches(
+      in: item.previewableText,
+      options: [],
+      range: NSRange(location: 0, length: item.previewableText.utf16.count)
+    )
+
+    let detected = matches.compactMap { $0.url }
+    let unique = Array(Set(detected)).sorted(by: { $0.absoluteString < $1.absoluteString })
+    cachedLinkURLs = unique
+
+    return unique
+  }
+
+  var matchesTextFilter: Bool {
+    !item.previewableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  var matchesFilesFilter: Bool { !fileURLs.isEmpty }
+
+  var matchesLinksFilter: Bool {
+    !linkURLs.filter { !$0.isFileURL }.isEmpty
+  }
+
+  var matchesImagesFilter: Bool { item.image != nil }
+
   var isPinned: Bool { item.pin != nil }
   var isUnpinned: Bool { item.pin == nil }
 
@@ -69,6 +104,10 @@ class HistoryItemDecorator: Identifiable, Hashable {
   }
 
   private(set) var item: HistoryItem
+  @ObservationIgnored
+  private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+  @ObservationIgnored
+  private var cachedLinkURLs: [URL]?
 
   init(_ item: HistoryItem, shortcuts: [KeyShortcut] = []) {
     self.item = item
