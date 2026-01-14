@@ -197,8 +197,8 @@ class History { // swiftlint:disable:this type_body_length
   @MainActor
   private func limitHistorySize(to maxSize: Int) {
     let unpinned = all.filter(\.isUnpinned)
-    if unpinned.count >= maxSize {
-      unpinned[maxSize...].forEach(delete)
+    if unpinned.count > maxSize {
+      unpinned.dropFirst(maxSize).forEach(delete)
     }
   }
 
