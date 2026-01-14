@@ -12,26 +12,29 @@ struct HeaderView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      if appState.searchVisible {
-        HStack {
-          if showTitle {
-            Text("Maccy")
-              .foregroundStyle(.secondary)
-          }
-
-          SearchFieldView(placeholder: "search_placeholder", query: $searchQuery)
-            .focused($searchFocused)
-            .frame(maxWidth: .infinity)
-            .onChange(of: scenePhase) {
-              if scenePhase == .background && !searchQuery.isEmpty {
-                searchQuery = ""
-              }
-            }
+      HStack {
+        if showTitle {
+          Text("Maccy")
+            .foregroundStyle(.secondary)
         }
-        .transition(.opacity)
-      }
 
-      FilterBarView()
+        SearchFieldView(placeholder: "search_placeholder", query: $searchQuery)
+          .focused($searchFocused)
+          .frame(maxWidth: .infinity)
+          .onChange(of: scenePhase) {
+            if scenePhase == .background && !searchQuery.isEmpty {
+              searchQuery = ""
+            }
+          }
+          // Only reliable way to disable the cursor. allowsHitTesting() does not work
+          .offset(y: appState.searchVisible ? 0 : -Popup.itemHeight)
+      }
+      .frame(height: appState.searchVisible ? Popup.itemHeight + 3 : 0)
+      .opacity(appState.searchVisible ? 1 : 0)
+
+      if appState.searchVisible {
+        FilterBarView()
+      }
     }
     .padding(.horizontal, 10)
     // 2px is needed to prevent items from showing behind top pinned items during scrolling

@@ -17,7 +17,24 @@ enum PopupState {
 
 @Observable
 class Popup {
-  let verticalPadding: CGFloat = 5
+  static let verticalSeparatorPadding = 6.0
+  static let horizontalSeparatorPadding = 6.0
+  static let verticalPadding: CGFloat = 5
+  static let horizontalPadding: CGFloat = 5
+
+  // Radius used for items inset by the padding. Ensures they visually have the same curvature
+  // as the menu.
+  static let cornerRadius: CGFloat = if #available(macOS 26.0, *) {
+    7
+  } else {
+    4
+  }
+
+  static let itemHeight: CGFloat = if #available(macOS 26.0, *) {
+    24
+  } else {
+    22
+  }
 
   var needsResize = false
   var height: CGFloat = 0
@@ -71,7 +88,7 @@ class Popup {
   }
 
   func resize(height: CGFloat) {
-    self.height = height + headerHeight + pinnedItemsHeight + footerHeight + (verticalPadding * 2)
+    self.height = height + headerHeight + pinnedItemsHeight + footerHeight + (Popup.verticalPadding * 2)
     AppState.shared.appDelegate?.panel.verticallyResize(to: self.height)
     needsResize = false
   }

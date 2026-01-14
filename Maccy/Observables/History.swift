@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import AppKit.NSRunningApplication
 import AppKit.NSWorkspace
 import Defaults
@@ -163,10 +164,8 @@ class History { // swiftlint:disable:this type_body_length
 
     Task {
       for await _ in Defaults.updates(.showSpecialSymbols, initial: false) {
-        items.forEach { item in
-          let title = item.item.generateTitle()
-          item.title = title
-          item.item.title = title
+        for item in items {
+          await updateTitle(item: item, title: item.item.generateTitle())
         }
       }
     }
@@ -174,7 +173,7 @@ class History { // swiftlint:disable:this type_body_length
     Task {
       for await _ in Defaults.updates(.imageMaxHeight, initial: false) {
         for item in items {
-          await item.sizeImages()
+          await item.cleanupImages()
         }
       }
     }
@@ -185,14 +184,40 @@ class History { // swiftlint:disable:this type_body_length
     let descriptor = FetchDescriptor<HistoryItem>()
     let results = try Storage.shared.context.fetch(descriptor)
     all = sorter.sort(results).map { HistoryItemDecorator($0) }
+
+    limitHistorySize(to: Defaults[.size])
     applyFilterAndSearch()
+
+    // Ensure that panel size is proper *after* loading all items.
+    Task {
+      AppState.shared.popup.needsResize = true
+    }
+  }
+
+  @MainActor
+  private func limitHistorySize(to maxSize: Int) {
+    let unpinned = all.filter(\.isUnpinned)
+    if unpinned.count >= maxSize {
+      unpinned[maxSize...].forEach(delete)
+    }
+  }
+
+  @MainActor
+  func insertIntoStorage(_ item: HistoryItem) throws {
+    logger.info("Inserting item with id '\(item.title)'")
+    Storage.shared.context.insert(item)
+    Storage.shared.context.processPendingChanges()
+    try? Storage.shared.context.save()
   }
 
   @discardableResult
   @MainActor
   func add(_ item: HistoryItem) -> HistoryItemDecorator {
-    while all.filter(\.isUnpinned).count >= Defaults[.size] {
-      delete(all.last(where: \.isUnpinned))
+    if #available(macOS 15.0, *) {
+      try? History.shared.insertIntoStorage(item)
+    } else {
+      // On macOS 14 the history item needs to be inserted into storage directly after creating it.
+      // It was already inserted after creation in Clipboard.swift
     }
 
     var removedItemIndex: Int?
@@ -207,6 +232,7 @@ class History { // swiftlint:disable:this type_body_length
       if !item.fromMaccy {
         item.application = existingHistoryItem.application
       }
+      logger.info("Removing duplicate item '\(item.title)'")
       Storage.shared.context.delete(existingHistoryItem)
       removedItemIndex = all.firstIndex(where: { $0.item == existingHistoryItem })
       if let removedItemIndex {
@@ -217,6 +243,10 @@ class History { // swiftlint:disable:this type_body_length
         Notifier.notify(body: item.title, sound: .write)
       }
     }
+
+    // Remove exceeding items. Do this after the item is added to avoid removing something
+    // if a duplicate was found as then the size already stayed the same.
+    limitHistorySize(to: Defaults[.size] - 1)
 
     sessionLog[Clipboard.shared.changeCount] = item
 
@@ -256,18 +286,24 @@ class History { // swiftlint:disable:this type_body_length
 
   @MainActor
   func clear() {
-    let visibleUnpinned = items.filter(\.isUnpinned)
-    let removableIdentifiers = Set(visibleUnpinned.map { $0.id })
-    let removableItems = Set(visibleUnpinned.map { $0.item })
-
     withLogging("Clearing history") {
-      visibleUnpinned.forEach { cleanup($0) }
-      all.removeAll { removableIdentifiers.contains($0.id) }
-      items.removeAll { removableIdentifiers.contains($0.id) }
-      sessionLog.removeValues { removableItems.contains($0) }
+      all.forEach { item in
+        if item.isUnpinned {
+          cleanup(item)
+        }
+      }
+      all.removeAll(where: \.isUnpinned)
+      sessionLog.removeValues { $0.pin == nil }
 
-      visibleUnpinned.forEach { item in
-        Storage.shared.context.delete(item.item)
+      try? Storage.shared.context.transaction {
+        try? Storage.shared.context.delete(
+          model: HistoryItem.self,
+          where: #Predicate { $0.pin == nil }
+        )
+        try? Storage.shared.context.delete(
+          model: HistoryItemContent.self,
+          where: #Predicate { $0.item?.pin == nil }
+        )
       }
       Storage.shared.context.processPendingChanges()
       try? Storage.shared.context.save()
@@ -313,6 +349,7 @@ class History { // swiftlint:disable:this type_body_length
     cleanup(item)
     withLogging("Removing history item") {
       Storage.shared.context.delete(item.item)
+      Storage.shared.context.processPendingChanges()
       try? Storage.shared.context.save()
     }
 
@@ -323,12 +360,9 @@ class History { // swiftlint:disable:this type_body_length
     applyFilterAndSearch()
   }
 
+  @MainActor
   private func cleanup(_ item: HistoryItemDecorator) {
-    item.imageGenerationTask?.cancel()
-    item.thumbnailImage?.recache()
-    item.previewImage?.recache()
-    item.thumbnailImage = nil
-    item.previewImage = nil
+    item.cleanupImages()
   }
 
   @MainActor
@@ -477,6 +511,12 @@ class History { // swiftlint:disable:this type_body_length
     }
 
     updateUnpinnedShortcuts()
+  }
+
+  @MainActor
+  private func updateTitle(item: HistoryItemDecorator, title: String) {
+    item.title = title
+    item.item.title = title
   }
 
   private func updateUnpinnedShortcuts() {
