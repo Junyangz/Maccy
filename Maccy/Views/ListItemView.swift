@@ -65,12 +65,14 @@ struct ListItemView<Title: View>: View {
           .frame(width: 50)
       }
     }
-    .frame(minHeight: 22)
+    .frame(minHeight: Popup.itemHeight)
     .id(id)
     .frame(maxWidth: .infinity, alignment: .leading)
     .foregroundStyle(isSelected ? Color.white : .primary)
-    .background(isSelected ? Color.accentColor.opacity(0.8) : .clear)
-    .clipShape(.rect(cornerRadius: 4))
+    // macOS 26 broke hovering if no background is present.
+    // The slight opcaity white background is a workaround
+    .background(isSelected ? Color.accentColor.opacity(0.8) : .white.opacity(0.001))
+    .clipShape(.rect(cornerRadius: Popup.cornerRadius))
     .onHover { hovering in
       if hovering {
         if !appState.isKeyboardNavigating {

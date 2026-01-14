@@ -24,7 +24,7 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
 
     super.init(
         contentRect: contentRect,
-        styleMask: [.nonactivatingPanel, .titled, .resizable, .closable, .fullSizeContentView],
+        styleMask: [.nonactivatingPanel, .resizable, .closable, .fullSizeContentView],
         backing: .buffered,
         defer: false
     )
@@ -43,6 +43,8 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     titlebarAppearsTransparent = true
     isMovableByWindowBackground = true
     hidesOnDeactivate = false
+    backgroundColor = .clear
+    titlebarSeparatorStyle = .none
 
     // Hide all traffic light buttons
     standardWindowButton(.closeButton)?.isHidden = true
@@ -55,9 +57,10 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
         .ignoresSafeArea()
         .gesture(DragGesture()
           .onEnded { _ in
-            self.saveWindowFrame(frame: self.frame)
+            self.saveWindowPosition()
         })
     )
+    contentView?.layer?.cornerRadius = Popup.cornerRadius + Popup.horizontalPadding
   }
 
   func toggle(height: CGFloat, at popupPosition: PopupPosition = Defaults[.popupPosition]) {
@@ -95,14 +98,17 @@ class FloatingPanel<Content: View>: NSPanel, NSWindowDelegate {
     }
   }
 
-  func saveWindowFrame(frame: NSRect) {
-    Defaults[.windowSize] = frame.size
-
+  func saveWindowPosition() {
     if let screenFrame = screen?.visibleFrame {
       let anchorX = frame.minX + frame.width / 2 - screenFrame.minX
       let anchorY = frame.maxY - screenFrame.minY
       Defaults[.windowPosition] = NSPoint(x: anchorX / screenFrame.width, y: anchorY / screenFrame.height)
     }
+  }
+
+  func saveWindowFrame(frame: NSRect) {
+    Defaults[.windowSize] = frame.size
+    saveWindowPosition()
   }
 
   func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
